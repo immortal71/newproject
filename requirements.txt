@@ -1,0 +1,4 @@
+biopython>=1.83
+edlib>=1.3.9
+numpy>=1.26
+pytest>=8.0
