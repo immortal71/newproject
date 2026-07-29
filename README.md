@@ -23,14 +23,20 @@ ribozyme family, or a characterizable artifact.
   cross-sample co-occurrence, build phylogenies of any protein families that
   turn up.
 
-## Status: Week 1, step 1
+## Status
 
-Per plan: *"pull one iHMP metatranscriptome, assemble it, and write the
-circularity detector. Nothing else."*
+Week 1 step 1 was *"pull one iHMP metatranscriptome, assemble it, and write
+the circularity detector. Nothing else."* That circularity detector is done.
+Since then this has grown to cover the other half of the core signature too:
+the structure-stability test against a dinucleotide-shuffled null. Database-
+homology filtering is the one piece of the signature definition not yet
+built.
 
-**The circularity detector is built and tested.** `obelisk_hunt/` implements
-it; `tests/test_circularity.py` validates it against synthetic positive and
-negative controls (see below).
+**Circularity detector, structure-stability scorer: built and tested.**
+`obelisk_hunt/circularity.py` + `obelisk_hunt/gfa.py` (circularity, see
+below) and `obelisk_hunt/structure.py` + `obelisk_hunt/shuffle.py`
+(stability-vs-shuffled-null, see below) all have synthetic-data test suites,
+plus one real-data validation (see "Validation").
 
 **The fetch-and-assemble-from-scratch half did not run for real iHMP data in
 this session.** This repo was built inside a network-sandboxed environment
@@ -81,11 +87,21 @@ scripts/assemble.sh data/<accession>/<accession>_1.fastq.gz \
                     data/<accession>/<accession>_2.fastq.gz \
                     data/<accession>_assembly
 
-# 3. detect circular contigs
-python -m obelisk_hunt data/<accession>_assembly/transcripts.fasta \
+# 3. detect circular contigs, and write out their trimmed sequences
+python -m obelisk_hunt detect-circular data/<accession>_assembly/transcripts.fasta \
     --gfa data/<accession>_assembly/assembly_graph_with_scaffolds.gfa \
-    --out data/<accession>_assembly/circular_contigs.tsv
+    --out data/<accession>_assembly/circular_contigs.tsv \
+    --trimmed-fasta data/<accession>_assembly/circular_trimmed.fasta
+
+# 4. score each circular candidate against its own dinucleotide-shuffled null
+python -m obelisk_hunt score-stability data/<accession>_assembly/circular_trimmed.fasta \
+    --n-shuffles 100 --seed 0 \
+    --out data/<accession>_assembly/stability.tsv
 ```
+
+(`detect-circular` is also the default when no subcommand is given, for
+backward compatibility with the Week-1 invocation:
+`python -m obelisk_hunt contigs.fasta ...`.)
 
 ## The circularity detector
 
@@ -104,26 +120,75 @@ check Recycler/Unicycler use to call circular plasmids.
 
 `obelisk_hunt/cli.py` combines both into one verdict per contig:
 `circular_graph+sequence` (both signals agree, highest confidence),
-`circular_graph_only`, `circular_sequence_only`, or `linear`.
+`circular_graph_only`, `circular_sequence_only`, or `linear`. Pass
+`--trimmed-fasta` to also write out the overlap-trimmed (de-duplicated)
+sequence of every circular-flagged contig, ready to feed into
+`score-stability`.
 
-Explicitly out of scope for this step (later stages of the plan):
-database-homology filtering, secondary-structure folding, and the
-shuffled-control stability test.
+## The structure-stability scorer
 
-### Validation
+`obelisk_hunt/shuffle.py` implements an Altschul-Erikson-style dinucleotide
+shuffle: it models the sequence as a walk over a multigraph (nodes = the four
+bases, edges = the sequence's own dinucleotides) and generates a *different*
+Eulerian path through that same multigraph via a randomized Hierholzer walk.
+Any such path has identical length, base composition, and dinucleotide
+composition to the original -- the matched null the project brief calls for,
+not just a same-GC shuffle.
 
-Real iHMP data wasn't reachable in this sandbox, so the detector is
-validated against synthetic contigs built to mimic exactly what an assembler
-does to a circular molecule (duplicate a k-1-ish window across the linearization
-break point), plus negative controls:
+`obelisk_hunt/structure.py` folds a candidate with ViennaRNA (`RNA.fold`),
+folds `--n-shuffles` dinucleotide-shuffled versions of it, and reports where
+the real sequence's MFE sits in that null distribution: a z-score (positive
+= more stable than its shuffles) and a one-sided empirical p-value.
+
+`python -m obelisk_hunt score-stability` runs this over a FASTA of
+candidates (typically `detect-circular`'s `--trimmed-fasta` output) and
+writes one row per sequence.
+
+This is the actual test in the project's definition: *"does this look
+designed by evolution to be a structure, while matching nothing"* -- the
+"matching nothing" (homology) half is still not built.
+
+## Validation
+
+Real iHMP data wasn't reachable in this sandbox (see "Status" above), so
+both modules are validated against synthetic data built to exercise the
+exact failure modes that matter, plus one genuine real-data result:
 
 ```bash
 pip install -r requirements.txt
 python -m pytest tests/ -v
 ```
 
-10 tests, including a 300-random-contig sweep asserting zero false positives
-on pure linear noise. This is a stand-in for a real positive/negative
-control, not a replacement for one -- the actual Week 1-3 "recover known
-Obelisks in iHMP data" milestone still requires running the real pipeline
-above on real reads.
+20 tests:
+- **Circularity** (`test_circularity.py`): synthetic circular/linear
+  contigs, including a 300-random-contig sweep asserting zero false
+  positives on pure linear noise, and a GFA self-loop parser test.
+- **Shuffle** (`test_shuffle.py`): asserts the shuffle exactly preserves
+  length, base composition, and dinucleotide composition, and that it
+  actually produces different orderings when more than one exists.
+- **Stability** (`test_structure.py`): a sequence built as an arbitrary arm
+  plus its own reverse complement (an obligate hairpin -- the "designed to
+  hold a shape" case) scores z > 10, p <= 0.02 against its shuffles; a
+  same-length random sequence scores -3 < z < 3.
+- **Real data** (`test_real_data.py`): see below.
+
+### The one real-data result so far
+
+`tests/fixtures/SRR11060618_subset.fasta` (provenance in
+`tests/fixtures/README.md`) is a real rnaSPAdes assembly of a real SRA run --
+not iHMP, and not necessarily an Obelisk, but genuine sequence, pulled from
+a source this sandbox could actually reach. Running the full chain on it:
+
+```bash
+python -m obelisk_hunt detect-circular tests/fixtures/SRR11060618_subset.fasta \
+    --trimmed-fasta /tmp/trimmed.fasta
+python -m obelisk_hunt score-stability /tmp/trimmed.fasta --n-shuffles 200 --seed 0
+```
+
+recovers 28/38 contigs as circular, with independently-assembled contigs
+converging tightly on two length clusters at a clean ~2x ratio (~337-338nt
+monomer, ~673-674nt dimer) -- the known genome length of Peach Latent Mosaic
+Viroid and its expected rolling-circle-replication concatemer, on a
+peach-tissue sample. `test_real_data.py` asserts that clustering. Whether
+those same monomer sequences also clear the stability-vs-shuffled-null bar
+is exactly the kind of result worth checking next.

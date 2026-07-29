@@ -1,12 +1,14 @@
 """CLI: scan an assembly's contigs for circularity evidence.
 
-    python -m obelisk_hunt contigs.fasta [--gfa assembly_graph.gfa] [--out circular_contigs.tsv]
+    python -m obelisk_hunt detect-circular contigs.fasta [--gfa assembly_graph.gfa] \
+        [--out circular_contigs.tsv] [--trimmed-fasta circular_trimmed.fasta]
 
 Writes one row per contig with the sequence-overlap evidence, the
 assembly-graph self-loop evidence (if a GFA was given), and a combined
-verdict. This is Week-1 scope only: circularity detection. It does not filter
-by database homology and does not score structure stability -- those are
-separate, later stages of the pipeline.
+verdict. `--trimmed-fasta` writes the overlap-trimmed sequence of each
+circular-flagged contig, ready for `python -m obelisk_hunt score-stability`
+(obelisk_hunt/stability_cli.py). This module does not filter by database
+homology -- that's a separate, not-yet-built stage.
 """
 
 from __future__ import annotations
@@ -42,9 +44,13 @@ def run(argv=None) -> int:
                          help="Minimum terminal-overlap length to call circular (default: 20)")
     parser.add_argument("--max-edit-frac", type=float, default=0.10,
                          help="Max fraction of edits allowed in the terminal overlap (default: 0.10)")
+    parser.add_argument("--trimmed-fasta", default=None,
+                         help="Write the de-duplicated (overlap-trimmed) sequence of every "
+                              "circular-flagged contig here, ready for score-stability")
     args = parser.parse_args(argv)
 
     graph = parse_gfa(args.gfa) if args.gfa else None
+    trimmed_fh = open(args.trimmed_fasta, "w") if args.trimmed_fasta else None
 
     out_fh = open(args.out, "w", newline="") if args.out else sys.stdout
     writer = csv.writer(out_fh, delimiter="\t")
@@ -70,6 +76,9 @@ def run(argv=None) -> int:
         verdict = classify(overlap, graph_loop)
         if verdict != "linear":
             n_circular += 1
+            if trimmed_fh:
+                trimmed_seq = str(record.seq)[:overlap.trimmed_length] if overlap else str(record.seq)
+                trimmed_fh.write(f">{record.id} verdict={verdict}\n{trimmed_seq}\n")
 
         writer.writerow([
             record.id,
@@ -83,6 +92,8 @@ def run(argv=None) -> int:
 
     if args.out:
         out_fh.close()
+    if trimmed_fh:
+        trimmed_fh.close()
 
     print(f"[obelisk_hunt] {n_circular}/{n_total} contigs >= {args.min_length}bp "
           f"flagged circular", file=sys.stderr)
