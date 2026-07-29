@@ -32,18 +32,27 @@ circularity detector. Nothing else."*
 it; `tests/test_circularity.py` validates it against synthetic positive and
 negative controls (see below).
 
-**The fetch-and-assemble half did not run for real in this session.** This
-repo was built inside a network-sandboxed environment whose proxy rejects
-connections to NCBI (`www.ncbi.nlm.nih.gov`, `sra-download.ncbi.nlm.nih.gov`,
-`trace.ncbi.nlm.nih.gov`) and EBI (`www.ebi.ac.uk`, `ftp.ebi.ac.uk`) --
-verified with direct `curl` probes, both return `403` at the proxy, not at
-the origin. Those are the two places iHMP metatranscriptome reads actually
-live. `scripts/fetch_sample.sh` and `scripts/assemble.sh` are real,
-runnable pipeline code, not placeholders -- but they need to be run
-somewhere with ordinary internet access (a workstation, HPC login node, or a
-cloud VM without this sandbox's network policy). This README says so
-explicitly rather than reporting a fabricated "ran it, got N contigs, M
-circular" result.
+**The fetch-and-assemble-from-scratch half did not run for real iHMP data in
+this session.** This repo was built inside a network-sandboxed environment
+whose proxy rejects connections to NCBI (`www.ncbi.nlm.nih.gov`,
+`sra-download.ncbi.nlm.nih.gov`, `trace.ncbi.nlm.nih.gov`, `pmc.ncbi.nlm.nih.gov`)
+and EBI (`www.ebi.ac.uk`, `ftp.ebi.ac.uk`) -- verified with direct `curl` and
+`WebFetch` probes, all return `403` at the proxy, not at the origin. Those
+are the two places iHMP metatranscriptome reads actually live, and I'm not
+reporting a fabricated "ran it, got N contigs, M circular" result for data I
+couldn't touch.
+
+`scripts/fetch_sample.sh` and `scripts/assemble.sh` are real, runnable
+pipeline code, not placeholders. Two things worth knowing before you run them
+for real: (1) `rnaspades.py` and `megahit` install cleanly from GitHub release
+binaries even inside this sandbox -- `objects.githubusercontent.com` and
+`raw.githubusercontent.com` are not blocked, only `github.com`'s HTML/API
+surface is; (2) `sra-tools` is *not* a single static binary -- its bioconda
+package pulls in `ncbi-vdb`, `ossuuid`, `perl-xml-libxml`, etc., which is real
+dependency-resolution work, better done with `conda`/`mamba` proper (as
+`environment.yml` does) than hand-extracted package-by-package. `conda.anaconda.org`
+(bioconda's actual package host) was reachable from here, for what that's
+worth, if a future session wants to push on this further.
 
 ### What "reproduce known Obelisks" actually requires
 
@@ -52,7 +61,11 @@ real pipeline below, on a real Obelisk-positive sample. A specific SRA
 accession isn't hard-pinned here on purpose: pick one from the iHMP/IBDMDB
 metatranscriptome cohort (or from the accession list in the Obelisks paper's
 supplement) after confirming it in the SRA/ENA browser -- don't take an
-accession number from memory, verify it against the source.
+accession number from memory, verify it against the source. The Obelisks
+paper's own detection tool, [VNom](https://github.com/Zheludev/VNom), is
+public and MIT-licensed; its README documents the same core heuristic this
+detector uses ("identify contigs with terminal k-mer repeats, consistent
+with circularity") and is worth reading before the real run.
 
 ## Running it for real (outside this sandbox)
 
