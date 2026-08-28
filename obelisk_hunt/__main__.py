@@ -1,6 +1,6 @@
 import sys
 
-COMMANDS = {"detect-circular", "score-stability"}
+COMMANDS = {"detect-circular", "score-stability", "filter-homology"}
 
 
 def main() -> int:
@@ -12,8 +12,10 @@ def main() -> int:
 
     if command == "detect-circular":
         from .cli import run
-    else:
+    elif command == "score-stability":
         from .stability_cli import run
+    else:
+        from .homology_cli import run
     return run(rest)
 
 

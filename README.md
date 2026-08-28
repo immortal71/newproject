@@ -27,16 +27,19 @@ ribozyme family, or a characterizable artifact.
 
 Week 1 step 1 was *"pull one iHMP metatranscriptome, assemble it, and write
 the circularity detector. Nothing else."* That circularity detector is done.
-Since then this has grown to cover the other half of the core signature too:
-the structure-stability test against a dinucleotide-shuffled null. Database-
-homology filtering is the one piece of the signature definition not yet
-built.
+Since then this has grown to cover all three clauses of the core signature:
+circularity, structure-stability against a dinucleotide-shuffled null, and
+database-homology filtering.
 
-**Circularity detector, structure-stability scorer: built and tested.**
-`obelisk_hunt/circularity.py` + `obelisk_hunt/gfa.py` (circularity, see
-below) and `obelisk_hunt/structure.py` + `obelisk_hunt/shuffle.py`
-(stability-vs-shuffled-null, see below) all have synthetic-data test suites,
-plus one real-data validation (see "Validation").
+**All three signature components: built and tested.**
+`obelisk_hunt/circularity.py` + `gfa.py` (circularity), `structure.py` +
+`shuffle.py` (stability-vs-shuffled-null), and `homology.py` (zero-homology
+filter, via minimap2) each have synthetic-data test suites, plus one
+real-data validation for the first two (see "Validation"). The homology
+filter is validated only on synthetic references so far -- a search for a
+real, reachable reference database (ViroidDB, a PLMVd GenBank entry) did not
+turn up anything servable from this sandbox in the time spent looking; see
+"Validation" for what was tried.
 
 **The fetch-and-assemble-from-scratch half did not run for real iHMP data in
 this session.** This repo was built inside a network-sandboxed environment
@@ -97,6 +100,13 @@ python -m obelisk_hunt detect-circular data/<accession>_assembly/transcripts.fas
 python -m obelisk_hunt score-stability data/<accession>_assembly/circular_trimmed.fasta \
     --n-shuffles 100 --seed 0 \
     --out data/<accession>_assembly/stability.tsv
+
+# 5. drop anything with database homology (point --db at whatever reference
+#    set you're screening against -- nt, RefSeq, ViroidDB, host genome, ...)
+python -m obelisk_hunt filter-homology data/<accession>_assembly/circular_trimmed.fasta \
+    --db reference.fasta \
+    --no-hit-fasta data/<accession>_assembly/dark_matter_candidates.fasta \
+    --hits-tsv data/<accession>_assembly/homology_hits.tsv
 ```
 
 (`detect-circular` is also the default when no subcommand is given, for
@@ -144,9 +154,26 @@ the real sequence's MFE sits in that null distribution: a z-score (positive
 candidates (typically `detect-circular`'s `--trimmed-fasta` output) and
 writes one row per sequence.
 
-This is the actual test in the project's definition: *"does this look
-designed by evolution to be a structure, while matching nothing"* -- the
-"matching nothing" (homology) half is still not built.
+This is the stability half of the actual test in the project's definition:
+*"does this look designed by evolution to be a structure, while matching
+nothing"*. The "matching nothing" half is `obelisk_hunt/homology.py`, below.
+
+## The homology filter
+
+`obelisk_hunt/homology.py` runs candidates against a reference FASTA/database
+with minimap2 and reports, per candidate, whether any hit clears
+`--min-identity` and `--min-coverage` -- a candidate with no such hit has
+"zero database homology" against that reference. minimap2 (not
+BLASTN/mmseqs2) is the backend because it's a single static binary,
+installable the same way as rnaSPAdes/MEGAHIT (GitHub release, no dependency
+chain) -- for a real deployment against nt/RefSeq at scale, BLASTN/mmseqs2 is
+more standard and more sensitive to short, divergent hits; swapping the
+backend later only means changing `run_minimap2`.
+
+`python -m obelisk_hunt filter-homology` runs this over a FASTA of candidates
+and writes both a hits TSV (audit trail: every sequence's best hit, or lack
+of one) and a FASTA of the sequences that passed -- literal candidate dark
+matter, pending the structure-stability result.
 
 ## Validation
 
@@ -159,7 +186,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -v
 ```
 
-20 tests:
+24 tests:
 - **Circularity** (`test_circularity.py`): synthetic circular/linear
   contigs, including a 300-random-contig sweep asserting zero false
   positives on pure linear noise, and a GFA self-loop parser test.
@@ -170,7 +197,23 @@ python -m pytest tests/ -v
   plus its own reverse complement (an obligate hairpin -- the "designed to
   hold a shape" case) scores z > 10, p <= 0.02 against its shuffles; a
   same-length random sequence scores -3 < z < 3.
+- **Homology** (`test_homology.py`, skipped automatically if `minimap2` isn't
+  on PATH): an exact match to a reference sequence is flagged as a hit; an
+  unrelated sequence is not; a candidate sharing only a short coincidental
+  40bp stretch with the reference (well under `--min-coverage`) is correctly
+  *not* flagged; a mixed batch is scored independently per sequence.
 - **Real data** (`test_real_data.py`): see below.
+
+I looked for a real, reachable reference database to run `filter-homology`
+against our recovered candidates for a genuine three-clause demonstration --
+[ViroidDB](https://github.com/Benjamin-Lee/viroiddb) is the obvious
+candidate, since it's a curated database of exactly this kind of sequence.
+Its GitHub repo doesn't serve a plain FASTA at a guessable raw-content path
+(the one file that turned up was a scraper's HTML fragment, not sequence
+data), and I didn't chase it further into whatever data pipeline actually
+backs viroids.org. So the homology filter is validated on synthetic
+references only; running it against a real database is a five-minute job
+once one is reachable -- the module's interface doesn't change either way.
 
 ### The one real-data result so far
 

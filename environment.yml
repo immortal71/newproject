@@ -7,6 +7,7 @@ dependencies:
   - sra-tools>=3.1        # prefetch, fasterq-dump
   - spades>=3.15          # provides rnaspades.py
   - megahit>=1.2          # optional faster alternative assembler
+  - minimap2>=2.28        # homology screen backend (filter-homology)
   - samtools
   - seqkit
   - pip
